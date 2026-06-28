@@ -7,7 +7,7 @@ import {
   Database, Globe2, SlidersHorizontal, Layers, Scale, Pin, X, Upload,
   TrendingUp, Activity, Gauge, AlertTriangle, ChevronRight, Shield, Radio,
   CheckSquare, Square, Lock, GitCompare, FlaskConical, Loader2,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, Download,
 } from "lucide-react";
 import Papa from "papaparse";
 /* ---- embedded real headline series (fallback when data files can't be fetched, e.g. inline preview). Single-file so this component renders standalone. ---- */
@@ -73,6 +73,12 @@ const KINETIC_CURATED = [
 ];
 const HYBRID =["CYBER_ATTACK", "PROPAGANDA", "ELECTION_FRAUD", "INTERNET_BLACKOUT", "HACKING", "DISINFORMATION"];
 const GEOECON = ["SANCTIONS", "ECON_BOYCOTT", "ECON_TARIFFS", "TRADE_DISPUTE", "EMBARGO", "EXPORT_CONTROL", "ASSET_FREEZE"];
+// Distinct, dark-background-friendly line colours for the per-theme overlay (keyed by KINETIC_ORDER).
+const THEME_PALETTE = {
+  DRONES: "#4d8dff", KIDNAP: "#a779ff", TERROR: "#2dd4bf", BORDER: "#f4a23f",
+  ARMEDCONFLICT: "#ef5da8", PEACEKEEPING: "#3ddc84", WEAPON: "#ffd54f",
+  UNREST_BELLIGERENT: "#ff7043", WAR: "#5fd0e6",
+};
 
 const RESOLUTIONS = [
   { id: "daily", label: "Daily", real: true },
@@ -139,12 +145,13 @@ function pillarMaskRatio(pdata, sel, order) {
   if (!arr) return new Array(n).fill(0);
   return arr.map((o, i) => (pdata.total[i] > 0 ? o / pdata.total[i] : 0));
 }
-// Kinetic (all-9 union) ratio restricted to a set of countries, from the cube.
-function kineticCountryRatio(countryData, selCodes) {
-  const n = countryData.total[countryData.countries[0]].length;
+// Kinetic (all-9 union) ratio restricted to a set of source outlets, from the cube.
+function kineticSourceRatio(sourceData, selDomains) {
+  const anyKey = selDomains.find((d) => sourceData.total[d]) || sourceData.sources[0];
+  const n = sourceData.total[anyKey].length;
   const num = new Array(n).fill(0), den = new Array(n).fill(0);
-  for (const cc of selCodes) {
-    const t = countryData.total[cc], k = countryData.kinOr[cc];
+  for (const dom of selDomains) {
+    const t = sourceData.total[dom], k = sourceData.kinOr[dom];
     if (!t) continue;
     for (let i = 0; i < n; i++) { den[i] += t[i]; num[i] += k[i]; }
   }
@@ -156,16 +163,16 @@ function kineticCountryRatio(countryData, selCodes) {
 function computeReal(data, combos, cfg, ext = {}) {
   const dates = data._ms; // epoch ms array
   const n = dates.length;
-  const { hybridData, geoData, countryData, hybridOn, geoOn, hybridSel, geoSel,
-    weights = { kinetic: 1, hybrid: 0, geoeconomic: 0 }, selCountries, nCountries,
+  const { hybridData, geoData, sourceData, hybridOn, geoOn, hybridSel, geoSel,
+    weights = { kinetic: 1, hybrid: 0, geoeconomic: 0 }, selSources, nSources,
     hybridOrder = [], geoOrder = [] } = ext;
 
-  // all sources selected -> canonical full index (combos); any subset (incl. none)
-  // -> recompute over exactly the selected countries from the cube (0 when none).
-  const countryFiltered = countryData && selCountries && nCountries != null
-    && selCountries.length < nCountries;
+  // all outlets selected -> canonical full index (combos); any subset (incl. none)
+  // -> recompute over exactly the selected outlets from the source cube (0 when none).
+  const countryFiltered = sourceData && selSources && nSources != null
+    && selSources.length < nSources;
   const kineticR = countryFiltered
-    ? kineticCountryRatio(countryData, selCountries)
+    ? kineticSourceRatio(sourceData, selSources)
     : kineticRatio(data, combos, cfg.kinetic);
   const hybridR = (hybridOn && hybridData) ? pillarMaskRatio(hybridData, hybridSel, hybridOrder) : null;
   const geoR = (geoOn && geoData) ? pillarMaskRatio(geoData, geoSel, geoOrder) : null;
@@ -223,6 +230,18 @@ const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct
 function fmtTick(ms) { const d = new Date(ms); return `${MON[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`; }
 function fmtFull(ms) { const d = new Date(ms); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
 const num = (x, d = 1) => (x == null || isNaN(x) ? "—" : x.toFixed(d));
+const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+// Build a CSV from an array of row objects and trigger a browser download.
+function downloadCSV(filename, rows) {
+  if (!rows || !rows.length) return;
+  const csv = Papa.unparse(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
 
 /* ============================== primitives ============================== */
 function Section({ icon: Icon, title, children, right, demo, defaultOpen = false }) {
@@ -268,7 +287,7 @@ export default function GeopoliticalRiskExplorer() {
   const [sampleMode, setSampleMode] = useState(false); // true when fetch failed -> embedded fallback
   const [hybridData, setHybridData] = useState(null);   // combos_hybrid.json (optional)
   const [geoData, setGeoData] = useState(null);          // combos_geo.json (optional)
-  const [countryData, setCountryData] = useState(null);  // country_cube.json (optional)
+  const [sourceData, setSourceData] = useState(null);    // source_cube.json (optional)
   // Relative to the page URL -> resolves to <site root>/data/... on Vercel.
   // (Avoids import.meta so the component also runs in non-bundler previews.)
   const base = "";
@@ -306,7 +325,7 @@ export default function GeopoliticalRiskExplorer() {
       .then((r) => (r.ok ? r.json() : null)).then((j) => j && set(j)).catch(() => {});
     grab("combos_hybrid.json", setHybridData);
     grab("combos_geo.json", setGeoData);
-    grab("country_cube.json", setCountryData);
+    grab("source_cube.json", setSourceData);
   }, [data, sampleMode]); // eslint-disable-line
 
   /* ---- controls ---- */
@@ -331,21 +350,20 @@ export default function GeopoliticalRiskExplorer() {
   const cfg = { kinetic, window: windowN, norm, blend: blendMode };
 
   const realPillars = !!(hybridData && geoData);
-  const realCountries = !!countryData;
-  // countries with at least one outlet selected (cube is country-level granularity)
-  const selCountries = useMemo(
-    () => Object.keys(SOURCE_CONFIG).filter((c) => (outlets[c] || []).length > 0),
-    [outlets]);
+  const realCountries = !!sourceData;  // per-source cube available
+  const totalOutlets = useMemo(() => Object.values(SOURCE_CONFIG).reduce((a, v) => a + v.length, 0), []);
+  // the individual outlet domains currently selected (per-source granularity)
+  const selSources = useMemo(() => Object.values(outlets).flat(), [outlets]);
 
   const ext = {
-    hybridData, geoData, countryData, hybridOn, geoOn, hybridSel: hybrid, geoSel: geo,
-    weights, selCountries, nCountries: Object.keys(SOURCE_CONFIG).length,
+    hybridData, geoData, sourceData, hybridOn, geoOn, hybridSel: hybrid, geoSel: geo,
+    weights, selSources, nSources: totalOutlets,
     hybridOrder: data?.meta?.hybridOrder || [], geoOrder: data?.meta?.geoOrder || [],
   };
 
   const result = useMemo(() => (data ? computeReal(data, combos, cfg, ext) : null),
-    [data, combos, JSON.stringify(cfg), hybridData, geoData, countryData, hybridOn, geoOn,
-      JSON.stringify(hybrid), JSON.stringify(geo), JSON.stringify(weights), JSON.stringify(selCountries)]); // eslint-disable-line
+    [data, combos, JSON.stringify(cfg), hybridData, geoData, sourceData, hybridOn, geoOn,
+      JSON.stringify(hybrid), JSON.stringify(geo), JSON.stringify(weights), JSON.stringify(selSources)]); // eslint-disable-line
   const baseResult = useMemo(() => (data && baseline ? computeReal(data, combos, baseline) : null),
     [data, combos, baseline]);
 
@@ -363,12 +381,58 @@ export default function GeopoliticalRiskExplorer() {
     return result.data.map((d, i) => ({ ...d, ci: ciResult?.data[i]?.idx, base: baseResult?.data[i]?.idx }));
   }, [result, ciResult, baseResult, uploaded]);
 
+  /* ---- per-theme overlay ---- */
+  const [themeView, setThemeView] = useState(() => KINETIC_ORDER.slice());
+  // One normalized, smoothed ratio series per kinetic theme (theme articles / total),
+  // sharing the index's rolling window and normalization for comparability.
+  const perThemeData = useMemo(() => {
+    if (!data) return [];
+    const series = {};
+    KINETIC_ORDER.forEach((t) => {
+      const s = data.singles[t] || [];
+      const ratio = s.map((v, i) => (data.total[i] > 0 ? v / data.total[i] : 0));
+      series[t] = normalize(rollMean(ratio, Math.max(1, windowN)), norm);
+    });
+    return data._ms.map((t, i) => {
+      const row = { t };
+      KINETIC_ORDER.forEach((k) => { row[k] = series[k][i]; });
+      return row;
+    });
+  }, [data, windowN, norm]);
+
   const nOutlets = useMemo(() => Object.values(outlets).reduce((a, b) => a + b.length, 0), [outlets]);
   const nCountries = useMemo(() => Object.values(outlets).filter((v) => v.length).length, [outlets]);
 
   const toggleOutlet = (c, d) => setOutlets((p) => ({ ...p, [c]: p[c].includes(d) ? p[c].filter((x) => x !== d) : [...p[c], d] }));
   const toggleCountry = (c) => setOutlets((p) => ({ ...p, [c]: p[c].length === SOURCE_CONFIG[c].length ? [] : [...SOURCE_CONFIG[c]] }));
   const toggleTheme = (val, key) => { const fns = { kinetic: setKinetic, hybrid: setHybrid, geo: setGeo }; fns[key]((p) => p.includes(val) ? p.filter((x) => x !== val) : [...p, val]); };
+
+  // Export the series currently plotted on the main index chart (CSV).
+  const exportCurrent = () => {
+    if (!chartData.length) return;
+    const labelMap = { idx: result?.separate ? "kinetic" : "index", hyb: "hybrid", geo: "geoeconomic", ci: "ci_illustrative", base: "baseline" };
+    const cols = ["idx", "hyb", "geo", "ci", "base"].filter((k) => chartData.some((r) => r[k] != null));
+    const rows = chartData.map((r) => {
+      const o = { date: uploaded ? r.t : isoDate(r.t) };
+      cols.forEach((k) => { o[labelMap[k]] = r[k] == null ? "" : +(+r[k]).toFixed(6); });
+      return o;
+    });
+    const tag = data?.meta ? `${data.meta.start}_${data.meta.end}` : "series";
+    downloadCSV(`gpr-index_${norm}_w${windowN}_${tag}.csv`, rows);
+  };
+
+  // Export the per-theme overlay (only the currently visible theme lines).
+  const exportThemes = () => {
+    if (!perThemeData.length) return;
+    const vis = KINETIC_ORDER.filter((t) => themeView.includes(t));
+    if (!vis.length) return;
+    const rows = perThemeData.map((r) => {
+      const o = { date: isoDate(r.t) };
+      vis.forEach((t) => { o[t] = +(+r[t]).toFixed(6); });
+      return o;
+    });
+    downloadCSV(`gpr-per-theme_${norm}_w${windowN}.csv`, rows);
+  };
 
   const yUnit = norm === "raw" ? "ratio" : norm === "z" ? "σ" : norm === "minmax" ? "/100" : "pct";
   const recipe = uploaded ? `Loaded file · ${uploaded.name}`
@@ -445,7 +509,7 @@ export default function GeopoliticalRiskExplorer() {
 
           <Section icon={Globe2} title="SOURCE COUNTRIES" demo={!realCountries} right={<span className="gri-count">{nOutlets} outlets</span>}>
             {realCountries
-              ? (result?.countryFiltered && <div className="gri-note">Index recomputed over the selected countries (real data, country-level granularity — all 9 kinetic themes).</div>)
+              ? (result?.countryFiltered && <div className="gri-note">Index recomputed over the {selSources.length} selected outlet{selSources.length === 1 ? "" : "s"} (real per-source data — all 9 kinetic themes).</div>)
               : <div className="gri-note">Per-source selection isn't wired to the index yet — the published series aggregates all G20 outlets.</div>}
             <div className="gri-srctools">
               <button onClick={() => setOutlets(Object.fromEntries(Object.entries(SOURCE_CONFIG).map(([k, v]) => [k, [...v]])))}>Select all</button>
@@ -586,6 +650,7 @@ export default function GeopoliticalRiskExplorer() {
                 {baseResult && <span><i className="dash" />baseline</span>}
                 {!uploaded && <button className={"gri-cmp" + (ciOn ? " on" : "")} onClick={() => setCiOn((v) => !v)}><GitCompare size={11} /> {ciOn ? "hide C&I" : "compare C&I"}</button>}
                 {!uploaded && <button className={"gri-pin" + (baseline ? " on" : "")} onClick={() => setBaseline(baseline ? null : { ...cfg })}><Pin size={11} /> {baseline ? "unpin" : "pin baseline"}</button>}
+                <button className="gri-cmp" onClick={exportCurrent} title="Download the series currently plotted (CSV)"><Download size={11} /> download CSV</button>
               </div>
             </div>
             <div className="gri-chartwrap">
@@ -614,6 +679,49 @@ export default function GeopoliticalRiskExplorer() {
               </div>
             )}
           </div>
+
+          {!uploaded && (
+            <div className="gri-card">
+              <div className="gri-card-head">
+                <h3>Per-theme indices<Activity size={14} /></h3>
+                <div className="gri-legend" style={{ flexWrap: "wrap", rowGap: 6 }}>
+                  {KINETIC_ORDER.map((t) => {
+                    const on = themeView.includes(t);
+                    return (
+                      <button key={t} onClick={() => setThemeView((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t])}
+                        title={on ? "Hide" : "Show"}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer",
+                          background: on ? "rgba(255,255,255,0.05)" : "transparent",
+                          border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 7px",
+                          color: on ? C.ink : C.faint, opacity: on ? 1 : 0.6,
+                          fontSize: 10, fontFamily: "IBM Plex Mono, monospace", letterSpacing: ".3px" }}>
+                        <i style={{ width: 8, height: 8, borderRadius: 2, display: "inline-block", background: on ? THEME_PALETTE[t] : C.faint }} />{t}
+                      </button>
+                    );
+                  })}
+                  <button className="gri-cmp" onClick={() => setThemeView(themeView.length ? [] : KINETIC_ORDER.slice())}>{themeView.length ? "hide all" : "show all"}</button>
+                  <button className="gri-cmp" onClick={exportThemes} title="Download the visible per-theme series (CSV)"><Download size={11} /> CSV</button>
+                </div>
+              </div>
+              <div className="gri-chartwrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={perThemeData} margin={{ top: 8, right: 14, bottom: 4, left: -8 }}>
+                    <CartesianGrid stroke={C.grid} vertical={false} />
+                    <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={fmtTick} tick={{ fill: C.inkSoft, fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }} stroke={C.borderStrong} minTickGap={48} />
+                    <YAxis tick={{ fill: C.inkSoft, fontSize: 10, fontFamily: "IBM Plex Mono, monospace" }} stroke={C.borderStrong} width={48} tickFormatter={(v) => (norm === "raw" ? v.toFixed(2) : v.toFixed(0))} />
+                    <Tooltip content={<TT unit={yUnit} prec={norm === "raw" ? 3 : 2} />} />
+                    {KINETIC_ORDER.filter((t) => themeView.includes(t)).map((t) => (
+                      <Line key={t} type="monotone" dataKey={t} stroke={THEME_PALETTE[t]} strokeWidth={1.5} dot={false} isAnimationActive={false} name={t} />
+                    ))}
+                    {!uploaded && <Brush dataKey="t" height={20} stroke={C.borderStrong} fill={C.panel2} tickFormatter={fmtTick} travellerWidth={8} />}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="gri-card-note" style={{ padding: "0 14px 10px" }}>
+                Per-theme ratio (theme articles ÷ total daily articles), sharing the same {windowN}-day rolling window and {norm} normalization as the index above. Click a theme to toggle its line.
+              </div>
+            </div>
+          )}
 
           <div className="gri-grid2">
             {!uploaded && (

@@ -51,20 +51,20 @@ def export_pillar(proc, out, fname, order, n_themes, outname, dates):
     _write(out, outname, obj)
 
 
-def export_country_cube(proc, out, dates):
-    path = os.path.join(proc, 'country_cube.parquet')
+def export_source_cube(proc, out, dates):
+    path = os.path.join(proc, 'source_cube.parquet')
     if not os.path.exists(path):
-        print('skip country_cube.json: country_cube.parquet not found')
+        print('skip source_cube.json: source_cube.parquet not found')
         return
     c = pd.read_parquet(path); c['date'] = pd.to_datetime(c['date'])
-    countries = sorted(x for x in c['country'].unique() if x != 'OTHER')
+    sources = sorted(c['source'].unique())
     total, kin_or = {}, {}
-    for cc in countries:
-        sub = c[c['country'] == cc]
-        total[cc] = _aligned(sub, dates, 'total_articles')
-        kin_or[cc] = _aligned(sub, dates, 'kin_or')
-    obj = {'countries': countries, 'total': total, 'kinOr': kin_or}
-    _write(out, 'country_cube.json', obj)
+    for s in sources:
+        sub = c[c['source'] == s]
+        total[s] = _aligned(sub, dates, 'total_articles')
+        kin_or[s] = _aligned(sub, dates, 'kin_or')
+    obj = {'sources': sources, 'total': total, 'kinOr': kin_or}
+    _write(out, 'source_cube.json', obj)
 
 
 def main(backend, out):
@@ -95,7 +95,7 @@ def main(backend, out):
     # optional pillars + country cube (only if the backend produced them)
     export_pillar(proc, out, 'pillar_hybrid_matrix.parquet', HYBRID_ORDER, 6, 'combos_hybrid.json', dates)
     export_pillar(proc, out, 'pillar_geo_matrix.parquet', GEO_ORDER, 7, 'combos_geo.json', dates)
-    export_country_cube(proc, out, dates)
+    export_source_cube(proc, out, dates)
 
 
 if __name__ == '__main__':
